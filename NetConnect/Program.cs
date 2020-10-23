@@ -4,11 +4,14 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using NetConnect.Models;
+using NetConnect.Workers;
 
 namespace NetConnect
 {
 	public class Program
 	{
+
 		public static void Main(string[] args)
 		{
 			CreateHostBuilder(args).Build().Run();
@@ -18,7 +21,10 @@ namespace NetConnect
 			Host.CreateDefaultBuilder(args)
 				.ConfigureServices((hostContext, services) =>
 				{
-					services.AddHostedService<Worker>();
+					services.Configure<AppConfiguration>(hostContext.Configuration);
+
+					services.AddHostedService<ConnectionWorker>();
+
 				});
 	}
 }
