@@ -1,7 +1,8 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using NetConnect.Models;
+using NetConnect.Core.Models;
+using NetConnect.Core.Services;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -16,68 +17,50 @@ namespace NetConnect.Workers
 	public class ConnectionWorker : BackgroundService
 	{
 		private readonly IOptionsMonitor<AppConfiguration> _appConfig;
+		private readonly IListenerService _listenerService;
+		private readonly IBroadcastService _broadcastService;
+		private readonly ConnectionManager _connectionManager;
 		private readonly ILogger<ConnectionWorker> _logger;
-		UdpClient _broadcaster;
-		UdpClient _listener;
 
-		ConcurrentBag<NetHost> _hosts = new ConcurrentBag<NetHost>();
-
+		private readonly Random _random = new Random();
+		private readonly NetHost _localHost;
 
 		public ConnectionWorker(IOptionsMonitor<AppConfiguration> appConfig,
+			IListenerService listenerService,
+			IBroadcastService broadcastService,
+			ConnectionManager connectionManager,
 			ILogger<ConnectionWorker> logger)
 		{
 			_appConfig = appConfig;
+			_listenerService = listenerService;
+			_broadcastService = broadcastService;
+			_connectionManager = connectionManager;
 			_logger = logger;
+
+			_localHost = NetHost.GetLocalHost(appConfig.CurrentValue);
 		}
-
-
 
 		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 		{
-			_broadcaster = new UdpClient();
-			StartListening(stoppingToken);
+			_listenerService.OnHostDiscovered += _listenerService_OnHostDiscovered;
+			_listenerService.StartListening(stoppingToken);
 			while (!stoppingToken.IsCancellationRequested)
 			{
-				await SendBroadcastAsync();
+				_broadcastService.SendBroadcast();
 
-				await Task.Delay(1000);
+				await Task.Delay(3000 + _random.Next(-1000, 1000));
+			}
+			_listenerService.OnHostDiscovered -= _listenerService_OnHostDiscovered;
+		}
+
+		private void _listenerService_OnHostDiscovered(object sender, NetHost e)
+		{
+			if (e != _localHost)
+			{
+				_connectionManager.AddHost(e);
 			}
 		}
 
 
-		private void StartListening(CancellationToken token)
-		{
-			int port = _appConfig.CurrentValue.Port;
-			var ep = new IPEndPoint(IPAddress.Any, port);
-			_listener = new UdpClient(port);
-
-			Task.Run(() =>
-			{
-				while (!token.IsCancellationRequested)
-				{
-					try
-					{
-						var data = _listener.Receive(ref ep);
-						_ = Task.Run(() =>
-						{
-							var msg = new DiscoveryMessage(data);
-							_logger.LogInformation("Host found: " + msg.Host.DeviceId);
-							_hosts.Add(msg.Host);
-						});
-					}
-					catch (Exception ex)
-					{
-						_logger.LogError(ex, "Error listening to replies");
-					}
-				}
-			}, token);
-
-		}
-
-		private async Task SendBroadcastAsync()
-		{
-			var data = DiscoveryMessage.Create(_appConfig.CurrentValue);
-			await _broadcaster.SendAsync(data, data.Length, IPAddress.Broadcast.ToString(), _appConfig.CurrentValue.Port);
-		}
 	}
 }
